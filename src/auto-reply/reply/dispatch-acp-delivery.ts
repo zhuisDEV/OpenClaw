@@ -36,10 +36,10 @@ function shouldTreatDeliveredTextAsVisible(params: {
   if (!params.text?.trim()) {
     return false;
   }
-  if (params.kind === "final") {
-    return true;
+  if (params.kind === "tool") {
+    return normalizeDeliveryChannel(params.channel) === "telegram";
   }
-  return normalizeDeliveryChannel(params.channel) === "telegram";
+  return true;
 }
 
 type AcpDispatchDeliveryState = {
