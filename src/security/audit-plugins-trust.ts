@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { listChannelPlugins } from "../channels/plugins/index.js";
 import { inspectReadOnlyChannelAccount } from "../channels/read-only-account-inspect.js";
 import { resolveNativeSkillsEnabled } from "../config/commands.js";
@@ -7,6 +8,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { AgentToolsConfig } from "../config/types.tools.js";
 import { readInstalledPackageVersion } from "../infra/package-update-utils.js";
 import { normalizePluginId, normalizePluginsConfig } from "../plugins/config-state.js";
+import { loadPluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 import type { SecurityAuditFinding } from "./audit.types.js";
 
@@ -280,26 +282,33 @@ export async function collectPluginsTrustFindings(params: {
     const allowConfigured = Array.isArray(allow) && allow.length > 0;
 
     if (allowConfigured) {
+      const workspaceDir =
+        resolveAgentWorkspaceDir(params.cfg, resolveDefaultAgentId(params.cfg)) ?? undefined;
       const installedPluginIds = new Set(pluginDirs.map((dir) => path.basename(dir).toLowerCase()));
-      const bundledPluginIds = new Set(listChannelPlugins().map((p) => p.id.toLowerCase()));
+      const knownPluginIds = new Set(
+        loadPluginManifestRegistry({
+          config: params.cfg,
+          workspaceDir,
+        }).plugins.map((plugin) => plugin.id.toLowerCase()),
+      );
       const phantomEntries = allow.filter((entry) => {
         if (typeof entry !== "string" || entry === "group:plugins") {
           return false;
         }
         const lower = entry.toLowerCase();
-        if (installedPluginIds.has(lower) || bundledPluginIds.has(lower)) {
+        if (installedPluginIds.has(lower) || knownPluginIds.has(lower)) {
           return false;
         }
         const canonicalId = normalizeOptionalLowercaseString(normalizePluginId(entry)) ?? "";
-        return !canonicalId || !bundledPluginIds.has(canonicalId);
+        return !canonicalId || !knownPluginIds.has(canonicalId);
       });
       if (phantomEntries.length > 0) {
         findings.push({
           checkId: "plugins.allow_phantom_entries",
           severity: "warn",
-          title: "plugins.allow contains entries with no matching installed plugin",
+          title: "plugins.allow contains entries with no matching known plugin",
           detail:
-            `The following plugins.allow entries do not correspond to any installed plugin: ${phantomEntries.join(", ")}.\n` +
+            `The following plugins.allow entries do not correspond to any known plugin: ${phantomEntries.join(", ")}.\n` +
             "Phantom entries could be exploited by registering a new plugin with an allowlisted ID.",
           remediation:
             "Remove unused entries from plugins.allow, or verify the expected plugins are installed.",

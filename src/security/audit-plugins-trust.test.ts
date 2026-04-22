@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { createPathResolutionEnv, withEnvAsync } from "../test-utils/env.js";
 import { collectPluginsTrustFindings } from "./audit-plugins-trust.js";
@@ -30,8 +30,14 @@ const readInstalledPackageVersionMock = vi.hoisted(() =>
   }),
 );
 
+const loadPluginManifestRegistryMock = vi.hoisted(() => vi.fn());
+
 vi.mock("../infra/package-update-utils.js", () => ({
   readInstalledPackageVersion: readInstalledPackageVersionMock,
+}));
+
+vi.mock("../plugins/manifest-registry.js", () => ({
+  loadPluginManifestRegistry: (...args: unknown[]) => loadPluginManifestRegistryMock(...args),
 }));
 
 vi.mock("../plugins/config-state.js", () => ({
@@ -105,6 +111,14 @@ describe("security audit install metadata findings", () => {
     fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-security-install-"));
     sharedInstallMetadataStateDir = path.join(fixtureRoot, "shared-install-metadata-state");
     await fs.mkdir(sharedInstallMetadataStateDir, { recursive: true });
+  });
+
+  beforeEach(() => {
+    loadPluginManifestRegistryMock.mockReset();
+    loadPluginManifestRegistryMock.mockReturnValue({
+      plugins: [{ id: "discord" }, { id: "bundled-provider-plugin" }],
+      diagnostics: [],
+    });
   });
 
   afterAll(async () => {
@@ -253,6 +267,23 @@ describe("security audit install metadata findings", () => {
     );
     expect(
       bundledFindings.find((finding) => finding.checkId === "plugins.allow_phantom_entries"),
+    ).toBeUndefined();
+
+    const bundledProviderStateDir = await makeTmpDir("phantom-bundled-provider-excluded");
+    await fs.mkdir(path.join(bundledProviderStateDir, "extensions", "some-installed-plugin"), {
+      recursive: true,
+    });
+
+    const bundledProviderFindings = await runInstallMetadataAudit(
+      {
+        plugins: { allow: ["bundled-provider-plugin", "some-installed-plugin"] },
+      },
+      bundledProviderStateDir,
+    );
+    expect(
+      bundledProviderFindings.find(
+        (finding) => finding.checkId === "plugins.allow_phantom_entries",
+      ),
     ).toBeUndefined();
 
     const reportedStateDir = await makeTmpDir("phantom-reported");
